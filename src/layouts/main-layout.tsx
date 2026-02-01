@@ -10,6 +10,7 @@ import { appDataDir } from "@tauri-apps/api/path";
 import { useRouter } from "next/router";
 import { useEffect, useRef, useState } from "react";
 import { BeatLoader } from "react-spinners";
+import AgentButton from "@/components/agent-button";
 import AdvancedCard from "@/components/common/advanced-card";
 import DevToolbar from "@/components/dev/dev-toolbar";
 import HeadNavBar from "@/components/head-navbar";
@@ -156,6 +157,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
           backgroundColor: standaloneBgColor,
         }}
       >
+        <AgentButton />
         {children}
         {isDev && <DevToolbar />}
       </div>
@@ -181,6 +183,7 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       bgBlendMode={isDarkenBg ? "darken" : "normal"}
       style={getGlobalExtraStyle(config)}
     >
+      <AgentButton />
       <HeadNavBar />
       {router.pathname === "/launch" ? (
         <>{children}</>
