@@ -45,6 +45,18 @@
         "minHeight": 440,
         "center": true,
         "dragDropEnabled": false
+      },
+      {
+        "label": "agent_chat",
+        "create": false,
+        "title": "",
+        "url": "/standalone/agent-chat",
+        "width": 800,
+        "height": 550,
+        "minWidth": 640,
+        "minHeight": 440,
+        "center": true,
+        "dragDropEnabled": true
       }
     ],
     "security": {

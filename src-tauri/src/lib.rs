@@ -145,6 +145,7 @@ pub async fn run() {
       discover::commands::fetch_news_post_summaries,
       intelligence::commands::check_llm_service_availability,
       intelligence::commands::fetch_llm_chat_response,
+      intelligence::commands::fetch_llm_chat_response_stream,
       tasks::commands::schedule_progressive_task_group,
       tasks::commands::cancel_progressive_task,
       tasks::commands::resume_progressive_task,
