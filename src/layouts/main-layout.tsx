@@ -183,10 +183,12 @@ const MainLayout = ({ children }: MainLayoutProps) => {
       bgBlendMode={isDarkenBg ? "darken" : "normal"}
       style={getGlobalExtraStyle(config)}
     >
-      <AgentButton />
       <HeadNavBar />
       {router.pathname === "/launch" ? (
-        <>{children}</>
+        <>
+          <AgentButton />
+          {children}
+        </>
       ) : (
         <AdvancedCard
           level="back"
