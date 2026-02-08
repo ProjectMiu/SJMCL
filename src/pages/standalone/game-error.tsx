@@ -101,7 +101,7 @@ const GameErrorPage: React.FC = () => {
       if (response.status === "success") {
         const errorLogs = response.data.filter((line) => {
           let level = getLogLevel(line);
-          return level == "ERROR" || level == "FATAL";
+          return level == "ERROR" || level == "FATAL" || level == "WARN";
         });
 
         const errorLog = errorLogs.join("\n");
