@@ -143,7 +143,7 @@ pub async fn run() {
       resource::commands::fetch_remote_resource_by_id,
       discover::commands::fetch_news_sources_info,
       discover::commands::fetch_news_post_summaries,
-      intelligence::commands::check_llm_service_availability,
+      intelligence::commands::retrieve_llm_models,
       intelligence::commands::fetch_llm_chat_response,
       intelligence::commands::fetch_llm_chat_response_stream,
       tasks::commands::schedule_progressive_task_group,

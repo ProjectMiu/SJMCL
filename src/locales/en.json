@@ -1326,7 +1326,8 @@
       "title": "Model",
       "settings": {
         "baseUrl": {
-          "title": "Base URL"
+          "title": "Base URL",
+          "fullUrl": "Full URL: {{url}}"
         },
         "apiKey": {
           "title": "API Key"
