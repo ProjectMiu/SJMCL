@@ -218,7 +218,8 @@
         "success": "Successfully opened game launching panel",
         "fail": "Failed to find the game instance"
       }
-    }
+    },
+    "bottomWarning": "By AI assistant, for reference only."
   },
   "AlertResourceDependencyModal": {
     "header": {

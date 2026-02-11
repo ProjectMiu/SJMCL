@@ -218,7 +218,8 @@
         "success": "已成功打开游戏启动界面",
         "fail": "无法找到该游戏实例"
       }
-    }
+    },
+    "bottomWarning": "由 AI 助手生成的内容，仅供参考。"
   },
   "AlertResourceDependencyModal": {
     "header": {

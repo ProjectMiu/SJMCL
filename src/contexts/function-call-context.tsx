@@ -6,16 +6,17 @@ export interface FunctionCallState {
   isExecuting: boolean;
 }
 
-interface FunctionCallContextType {
-  // Key: messageId-functionIndex
-  callStates: Record<string, FunctionCallState>;
-  setCallState: (id: number, state: FunctionCallState) => void;
-  getCallState: (id: number) => FunctionCallState;
-}
+export const FunctionCallStateContext = createContext<
+  Record<number, FunctionCallState> | undefined
+>(undefined);
 
-const FunctionCallContext = createContext<FunctionCallContextType | undefined>(
-  undefined
-);
+export const FunctionCallActionsContext = createContext<
+  | {
+      setCallState: (id: number, state: FunctionCallState) => void;
+      getCallState: (id: number) => FunctionCallState;
+    }
+  | undefined
+>(undefined);
 
 export const FunctionCallProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
@@ -24,32 +25,64 @@ export const FunctionCallProvider: React.FC<{ children: React.ReactNode }> = ({
     Record<number, FunctionCallState>
   >({});
 
-  const setCallState = (id: number, state: FunctionCallState) => {
-    setCallStates((prev) => ({
-      ...prev,
-      [id]: state,
-    }));
-  };
+  // Use a ref to store state for synchronous access and stable callbacks
+  const callStatesRef = React.useRef(callStates);
 
-  const getCallState = (id: number) => {
-    return callStates[id] || { result: null, error: null, isExecuting: false };
-  };
+  const setCallState = React.useCallback(
+    (id: number, state: FunctionCallState) => {
+      // Update ref immediately for synchronous logic
+      callStatesRef.current = { ...callStatesRef.current, [id]: state };
+      // Trigger re-render
+      setCallStates((prev) => ({
+        ...prev,
+        [id]: state,
+      }));
+    },
+    []
+  );
+
+  const getCallState = React.useCallback((id: number) => {
+    return (
+      callStatesRef.current[id] || {
+        result: null,
+        error: null,
+        isExecuting: false,
+      }
+    );
+  }, []);
 
   return (
-    <FunctionCallContext.Provider
-      value={{ callStates, setCallState, getCallState }}
-    >
-      {children}
-    </FunctionCallContext.Provider>
+    <FunctionCallActionsContext.Provider value={{ setCallState, getCallState }}>
+      <FunctionCallStateContext.Provider value={callStates}>
+        {children}
+      </FunctionCallStateContext.Provider>
+    </FunctionCallActionsContext.Provider>
   );
 };
 
-export const useFunctionCall = () => {
-  const context = useContext(FunctionCallContext);
-  if (!context) {
+export const useFunctionCallState = () => {
+  const context = useContext(FunctionCallStateContext);
+  if (context === undefined) {
     throw new Error(
-      "useFunctionCall must be used within a FunctionCallProvider"
+      "useFunctionCallState must be used within a FunctionCallProvider"
     );
   }
   return context;
+};
+
+export const useFunctionCallActions = () => {
+  const context = useContext(FunctionCallActionsContext);
+  if (context === undefined) {
+    throw new Error(
+      "useFunctionCallActions must be used within a FunctionCallProvider"
+    );
+  }
+  return context;
+};
+
+export const useFunctionCall = () => {
+  return {
+    callStates: useFunctionCallState(),
+    ...useFunctionCallActions(),
+  };
 };
