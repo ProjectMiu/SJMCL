@@ -141,11 +141,7 @@ const MarkdownContainer: React.FC<MarkdownContainerProps> = ({
               const data = JSON.parse(jsonStr);
               if (data.name) {
                 result.push(
-                  <FunctionCallWidget
-                    key={`fn-${result.length}`}
-                    data={data}
-                    onInvoke={onFunctionCall}
-                  />
+                  <FunctionCallWidget key={`fn-${result.length}`} data={data} />
                 );
               } else {
                 result.push(
@@ -197,7 +193,7 @@ const MarkdownContainer: React.FC<MarkdownContainerProps> = ({
 
       return children;
     },
-    [processGitHubMarks, onFunctionCall]
+    [processGitHubMarks]
   );
 
   // map HTML tags to Chakra components so styles are inherited.
@@ -288,9 +284,7 @@ const MarkdownContainer: React.FC<MarkdownContainerProps> = ({
           if (funcMatch) {
             try {
               const data = JSON.parse(funcMatch[1]);
-              return (
-                <FunctionCallWidget data={data} onInvoke={onFunctionCall} />
-              );
+              return <FunctionCallWidget data={data} />;
             } catch (e) {
               // ignore
             }
