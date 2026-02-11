@@ -11,7 +11,7 @@ import {
 } from "@chakra-ui/react";
 import React, { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { LuTrash2 } from "react-icons/lu";
+import { LuPause, LuSend, LuTrash2 } from "react-icons/lu";
 import MarkdownContainer from "@/components/common/markdown-container";
 import { MiuChatLogoTitle } from "@/components/logo-title";
 import { useLauncherConfig } from "@/contexts/config";
@@ -32,6 +32,7 @@ const AgentChatPage: React.FC = () => {
   const { t, i18n } = useTranslation();
   const { config, getJavaInfos } = useLauncherConfig();
   const { getPlayerList, selectedPlayer } = useGlobalData();
+  const primaryColor = config.appearance.theme.primaryColor;
 
   // Initialize with system prompt
   const [messages, setMessages] = useState<ChatMessage[]>(() => [
@@ -46,6 +47,7 @@ const AgentChatPage: React.FC = () => {
   const toast = useToast();
   const { openSharedModal } = useSharedModals();
   const [javaInfos, setJavaInfos] = useState<JavaInfo[]>();
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     getPlayerList(true);
@@ -69,6 +71,8 @@ const AgentChatPage: React.FC = () => {
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
 
+    const requestId = ++requestIdRef.current;
+
     if (!config.intelligence.enabled) {
       // TODO: toast error or show modal
       return;
@@ -84,7 +88,10 @@ const AgentChatPage: React.FC = () => {
 
     // Initial empty assistant message placeholder
     const assistantMsg: ChatMessage = { role: "assistant", content: "" };
-    setMessages((prev) => [...prev, assistantMsg]);
+    setMessages((prev) => {
+      if (requestId !== requestIdRef.current) return prev;
+      return [...prev, assistantMsg];
+    });
 
     let currentResponse = "";
 
@@ -93,6 +100,7 @@ const AgentChatPage: React.FC = () => {
       await IntelligenceService.fetchLLMChatResponse(newMessages, (chunk) => {
         currentResponse += chunk;
         setMessages((prev) => {
+          if (requestId !== requestIdRef.current) return prev;
           const updated = [...prev];
           // Update the last message (which is the assistant's)
           if (updated.length > 0) {
@@ -107,6 +115,7 @@ const AgentChatPage: React.FC = () => {
     } catch (error) {
       console.error(error);
       setMessages((prev) => {
+        if (requestId !== requestIdRef.current) return prev;
         const updated = [...prev];
         if (updated.length > 0) {
           updated[updated.length - 1] = {
@@ -119,8 +128,16 @@ const AgentChatPage: React.FC = () => {
         return updated;
       });
     } finally {
-      setIsLoading(false);
+      if (requestId === requestIdRef.current) {
+        setIsLoading(false);
+      }
     }
+  };
+
+  const handleStopReply = () => {
+    // Cancel current streaming updates
+    requestIdRef.current += 1;
+    setIsLoading(false);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -201,6 +218,7 @@ const AgentChatPage: React.FC = () => {
   const handleFunctionCall = React.useCallback(
     async (name: string, params: Record<string, any>) => {
       console.log("Function Call:", name, params);
+      const requestId = ++requestIdRef.current;
 
       let result = "";
       try {
@@ -223,11 +241,15 @@ const AgentChatPage: React.FC = () => {
       // Update state with the system message (result)
       // We don't display the system message in UI immediately (filtered out), but strictly keep it in history.
       setMessages(newHistory);
-
-      setIsLoading(true);
+      if (requestId === requestIdRef.current) {
+        setIsLoading(true);
+      }
 
       // Add a placeholder message for the assistant's response
-      setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
+      setMessages((prev) => {
+        if (requestId !== requestIdRef.current) return prev;
+        return [...prev, { role: "assistant", content: "" }];
+      });
 
       try {
         let currentResponse = "";
@@ -236,6 +258,7 @@ const AgentChatPage: React.FC = () => {
         await IntelligenceService.fetchLLMChatResponse(newHistory, (chunk) => {
           currentResponse += chunk;
           setMessages((prev) => {
+            if (requestId !== requestIdRef.current) return prev;
             const updated = [...prev];
             // Update the last message (which is the new assistant message)
             if (updated.length > 0) {
@@ -251,6 +274,7 @@ const AgentChatPage: React.FC = () => {
         console.error(e);
         toast({ title: "Error fetching response", status: "error" });
         setMessages((prev) => {
+          if (requestId !== requestIdRef.current) return prev;
           const updated = [...prev];
           if (
             updated.length > 0 &&
@@ -262,7 +286,9 @@ const AgentChatPage: React.FC = () => {
           return updated;
         });
       } finally {
-        setIsLoading(false);
+        if (requestId === requestIdRef.current) {
+          setIsLoading(false);
+        }
       }
       return result;
     },
@@ -353,10 +379,13 @@ const AgentChatPage: React.FC = () => {
   const msgBgUser = useColorModeValue("blue.500", "blue.600");
   const msgBgBot = "transparent";
   const borderColor = useColorModeValue("gray.200", "gray.700");
+  const inputShellBg = useColorModeValue("gray.50", "gray.800");
+  const inputShellBorder = useColorModeValue("gray.200", "gray.700");
 
   let filteredMessages = messages.filter(
     (msg) => msg.role !== "system" && msg.content.trim()
   );
+  const canSend = input.trim().length > 0;
 
   return (
     <Flex direction="column" h="100vh" bg={bg}>
@@ -378,11 +407,14 @@ const AgentChatPage: React.FC = () => {
           aria-label="clear"
           size="sm"
           variant="ghost"
-          onClick={() =>
+          onClick={() => {
+            requestIdRef.current += 1; // cancel当前流式请求
+            setIsLoading(false);
+            setInput("");
             setMessages([
               { role: "system", content: getChatSystemPrompt(i18n.language) },
-            ])
-          }
+            ]);
+          }}
         />
       </Flex>
 
@@ -479,16 +511,44 @@ const AgentChatPage: React.FC = () => {
         borderTopWidth={1}
         borderColor={borderColor}
       >
-        <HStack>
-          <Textarea
-            placeholder={t("AgentChatPage.placeholder")}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            borderRadius="xl"
-          />
-        </HStack>
+        <Box
+          bg={inputShellBg}
+          borderWidth={1}
+          borderColor={inputShellBorder}
+          borderRadius="2xl"
+          p={3}
+        >
+          <Flex direction="column" gap={3}>
+            <Textarea
+              placeholder={t("AgentChatPage.placeholder")}
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              variant="unstyled"
+              resize="none"
+              minH="60px"
+              _placeholder={{
+                color: useColorModeValue("gray.400", "gray.500"),
+              }}
+            />
+            <HStack justify="space-between" align="center">
+              <Text color="gray.400" fontSize="xs">
+                {/* TODO add more setting icon */}
+              </Text>
+              <IconButton
+                aria-label={isLoading ? "stop" : "send"}
+                icon={isLoading ? <LuPause /> : <LuSend />}
+                colorScheme={
+                  isLoading ? "red" : canSend ? primaryColor : "gray"
+                }
+                variant="solid"
+                borderRadius="full"
+                isDisabled={!isLoading && !canSend}
+                onClick={isLoading ? handleStopReply : handleSend}
+              />
+            </HStack>
+          </Flex>
+        </Box>
       </Box>
     </Flex>
   );
