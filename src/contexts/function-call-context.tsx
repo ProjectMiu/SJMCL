@@ -14,6 +14,7 @@ export const FunctionCallActionsContext = createContext<
   | {
       setCallState: (id: number, state: FunctionCallState) => void;
       getCallState: (id: number) => FunctionCallState;
+      hasExecutingCall: () => boolean;
     }
   | undefined
 >(undefined);
@@ -51,8 +52,16 @@ export const FunctionCallProvider: React.FC<{ children: React.ReactNode }> = ({
     );
   }, []);
 
+  const hasExecutingCall = React.useCallback(() => {
+    return Object.values(callStatesRef.current).some(
+      (state) => state.isExecuting
+    );
+  }, []);
+
   return (
-    <FunctionCallActionsContext.Provider value={{ setCallState, getCallState }}>
+    <FunctionCallActionsContext.Provider
+      value={{ setCallState, getCallState, hasExecutingCall }}
+    >
       <FunctionCallStateContext.Provider value={callStates}>
         {children}
       </FunctionCallStateContext.Provider>
