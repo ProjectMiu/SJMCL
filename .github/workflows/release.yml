@@ -212,7 +212,7 @@ jobs:
 
       - name: Create Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_KEY }}
           VERSION: ${{ needs.Version-Check.outputs.version }}
         run: |
           RELEASE_TAG="${{ env.VERSION }}"

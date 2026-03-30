@@ -17,7 +17,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_KEY }}
           ref: main
 
       - name: Set up Python
@@ -76,7 +76,7 @@ jobs:
         if: steps.changes.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GH_KEY }}
           commit-message: ${{ steps.meta.outputs.pr_title }}
           title: ${{ steps.meta.outputs.pr_title }}
           body: ${{ steps.meta.outputs.pr_body }}

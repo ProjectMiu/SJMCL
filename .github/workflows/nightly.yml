@@ -210,7 +210,7 @@ jobs:
 
       - name: Delete existing nightly release if exists
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_KEY }}
         run: |
           # Check if nightly release exists and delete it
           if gh release view nightly >/dev/null 2>&1; then
@@ -222,7 +222,7 @@ jobs:
 
       - name: Create nightly pre-release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_KEY }}
           NIGHTLY_VERSION: ${{ needs.Check-and-Prepare.outputs.nightly_version }}
           COMMIT_HASH: ${{ needs.Check-and-Prepare.outputs.commit_hash }}
           SIGNING_SUCCESS: ${{ needs.Sign-macOS-Artifacts.result == 'success' }}
@@ -266,7 +266,7 @@ jobs:
 
       - name: Cleanup old nightly releases
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_KEY }}
         run: |
           echo "Checking for old nightly releases to cleanup..."
           
