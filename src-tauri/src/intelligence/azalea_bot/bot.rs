@@ -4,13 +4,14 @@ use crate::account::models::{
 };
 use crate::error::SJMCLResult;
 use crate::intelligence::azalea_bot::constants::BOT_EXIT_EVENT;
-use crate::intelligence::azalea_bot::models::{
-  ActionType, AgentDecision, BotExitPayload, BotState,
-};
+use crate::intelligence::azalea_bot::models::{BotExitPayload, BotState};
+use crate::intelligence::miu::capabilities;
+use crate::intelligence::miu::capabilities::models::AgentResponse;
+use crate::intelligence::miu::capabilities::prompt_builder::build_capabilities_prompt;
+use crate::intelligence::miu::memory::models::RecallContext;
 use crate::intelligence::models::ChatMessage;
 use crate::utils::fs::get_app_resource_filepath;
 use crate::utils::image::load_image_from_dir;
-use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::{prelude::*, BlockPos, Event};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -44,11 +45,34 @@ pub async fn join_server(app_handle: &AppHandle, port: u16, name: String) -> SJM
   if let Some(bot) = old_bot {
     bot.exit();
   }
-  let bot_state = BotState {
-    client: client_ptr.clone(),
-    app_handle: Some(app_handle.clone()),
-    ..BotState::default()
+
+  // 异步初始化记忆系统
+  let memory_arc = {
+    let binding = app_handle.state::<Mutex<BotState>>();
+    let bot = binding.lock()?;
+    bot.memory.clone()
+  }; // MutexGuard dropped here, before any .await
+  {
+    let mem = memory_arc.lock().await;
+    if let Err(e) = mem.initialize().await {
+      log::warn!("Failed to initialize memory system: {:?}", e);
+    }
+  }
+
+  let bot_state = {
+    let binding = app_handle.state::<Mutex<BotState>>();
+    let bot = binding.lock()?;
+    BotState {
+      client: client_ptr.clone(),
+      app_handle: Some(app_handle.clone()),
+      exit_notified: bot.exit_notified.clone(),
+      last_action_time: bot.last_action_time.clone(),
+      cooldown: bot.cooldown,
+      registry: bot.registry.clone(),
+      memory: bot.memory.clone(),
+    }
   };
+
   let address = format!("localhost:{}", port);
   let account = Account::offline(name.as_str());
   {
@@ -122,14 +146,38 @@ async fn handle_events(bot: Client, event: Event, state: BotState) -> SJMCLResul
     Event::Tick => {
       let mut last_act = state.last_action_time.lock()?;
       if last_act.elapsed() > state.cooldown {
-        let observation = perceive_world_state(&bot);
+        let (observation, recall_context) = perceive_world_state(&bot);
 
         let state_clone = state.clone();
         let bot_clone = bot.clone();
 
         tokio::task::spawn_local(async move {
-          if let Ok(decision) = query_llm_decision(&state_clone, &observation).await {
-            execute_action(&bot_clone, decision).await;
+          match query_llm_decision(&state_clone, &observation, &recall_context).await {
+            Ok(response) => {
+              // 执行动作
+              let result =
+                capabilities::execute_action(&state_clone.registry, &bot_clone, &response.action)
+                  .await;
+
+              log::info!(
+                ">>> [{}] {} → {} ({})",
+                response.action.capability,
+                response.thought,
+                result.message,
+                if result.success { "OK" } else { "FAIL" }
+              );
+
+              // 处理记忆更新
+              if !response.memory_updates.is_empty() {
+                let memory = state_clone.memory.lock().await;
+                if let Err(e) = memory.apply_updates(response.memory_updates).await {
+                  log::warn!("Failed to apply memory updates: {:?}", e);
+                }
+              }
+            }
+            Err(e) => {
+              log::warn!("LLM decision failed: {:?}", e);
+            }
           }
         });
 
@@ -155,36 +203,76 @@ async fn handle_events(bot: Client, event: Event, state: BotState) -> SJMCLResul
   Ok(())
 }
 
-fn perceive_world_state(bot: &Client) -> String {
+/// 感知世界状态 + 构建记忆召回上下文
+fn perceive_world_state(bot: &Client) -> (String, RecallContext) {
   let position = bot.position();
   let block_pos = BlockPos::from(position);
 
   let mut observation = format!(
-    "当前坐标: ({},{},{})\n",
+    "Position: ({}, {}, {})\n",
     block_pos.x, block_pos.y, block_pos.z
   );
 
-  // 1. 感知周边实体
-  observation.push_str("附近的实体 (距离 < 10格):\n");
-  // 利用谓词过滤所有的底层实体，提取具有坐标和合法类型的实体
+  // 健康和饥饿
+  let health = bot.health();
+  let hunger = bot.hunger();
+  observation.push_str(&format!(
+    "Health: {:.0}/20, Hunger: {}/20\n",
+    health, hunger.food
+  ));
+
+  // 手持物品
+  let held = bot.get_held_item();
+  if !held.is_empty() {
+    observation.push_str(&format!("Holding: {:?} x{}\n", held.kind(), held.count()));
+  } else {
+    observation.push_str("Holding: empty hand\n");
+  }
+
+  let mut recall_ctx = RecallContext::default();
+
+  // 1. 感知附近实体
+  observation.push_str("\nNearby entities (within 10 blocks):\n");
   let nearby_entities =
     bot.nearest_entities_by::<&azalea_entity::Position, ()>(|_: &azalea_entity::Position| true);
-  for entity in nearby_entities.iter().take(5) {
+  let mut entity_types = Vec::new();
+  for entity in nearby_entities.iter().take(8) {
     let e_pos = entity.position();
     let dist = position.distance_to(e_pos);
     if dist > 0.1 && dist < 10.0 {
+      let entity_desc = format!("Entity#{}", entity.id().index());
       observation.push_str(&format!(
-        "- 实体ID {}: 距离 {:.1} 格\n",
-        entity.id().index(),
-        dist
+        "- {} at ({:.0},{:.0},{:.0}), distance {:.1}\n",
+        entity_desc, e_pos.x, e_pos.y, e_pos.z, dist
       ));
+      entity_types.push(entity_desc);
     }
   }
+  recall_ctx.nearby_entities = entity_types;
 
-  // 2. 感知具有战略价值的方块（以机器人为中心进行 5x5x5 扫描）
-  observation.push_str("附近的方块:\n");
+  // 2. 在线玩家
+  let tab_list = bot.tab_list();
+  let player_names: Vec<String> = tab_list
+    .values()
+    .filter_map(|info| {
+      let name = info.profile.name.clone();
+      if name.is_empty() {
+        None
+      } else {
+        Some(name)
+      }
+    })
+    .collect();
+  if !player_names.is_empty() {
+    observation.push_str(&format!("\nOnline players: {}\n", player_names.join(", ")));
+    recall_ctx.nearby_players = player_names;
+  }
+
+  // 3. 感知周围方块（5x5x5）
+  observation.push_str("\nNotable blocks nearby:\n");
   let world_lock = bot.world();
   let instance = world_lock.read();
+  let mut block_types = Vec::new();
 
   let search_radius = 5;
   for x in -search_radius..=search_radius {
@@ -193,87 +281,73 @@ fn perceive_world_state(bot: &Client) -> String {
         let current_check_pos = block_pos.up(y).east(x).south(z);
         if let Some(state) = instance.get_block_state(current_check_pos) {
           let block_desc = format!("{:?}", state);
-          // 启发式过滤：移除大量的无价值背景方块，节约 Token
+          // 过滤常见无价值方块
           if !block_desc.contains("Air")
             && !block_desc.contains("Stone")
             && !block_desc.contains("Dirt")
+            && !block_desc.contains("Grass")
+            && !block_desc.contains("Bedrock")
+            && !block_desc.contains("Deepslate")
+            && !block_desc.contains("Water")
           {
             observation.push_str(&format!(
-              "- {}: ({},{},{})\n",
+              "- {} at ({},{},{})\n",
               block_desc, current_check_pos.x, current_check_pos.y, current_check_pos.z
             ));
+            if !block_types.contains(&block_desc) {
+              block_types.push(block_desc);
+            }
           }
         }
       }
     }
   }
+  recall_ctx.nearby_blocks = block_types;
 
-  observation
+  (observation, recall_ctx)
 }
 
-async fn execute_action(bot: &Client, decision: AgentDecision) {
-  println!(">>> AI 思考: {}", decision.thought);
+/// 查询 LLM 做出决策（集成 Memory + Capability prompt）
+async fn query_llm_decision(
+  state: &BotState,
+  observation: &str,
+  recall_context: &RecallContext,
+) -> SJMCLResult<AgentResponse> {
+  // 1. 构建记忆 prompt
+  let memory_prompt = {
+    let memory = state.memory.lock().await;
+    memory
+      .build_prompt(recall_context)
+      .await
+      .unwrap_or_default()
+  };
 
-  match decision.action {
-    ActionType::Move => {
-      if let Some(coords) = decision.target_coords {
-        println!(
-          ">>> 执行: 寻路前往 [{}, {}, {}]",
-          coords.x, coords.y, coords.z
-        );
-        let goal = BlockPosGoal(BlockPos::new(coords.x, coords.y, coords.z));
-        // 使用底层 Baritone 算法的异步寻路启动器
-        bot.start_goto(goal);
-      }
-    }
-    ActionType::Mine => {
-      if let Some(coords) = decision.target_coords {
-        let pos = BlockPos::new(coords.x, coords.y, coords.z);
-        println!(
-          ">>> 执行: 自动匹配工具并挖掘方块 [{}, {}, {}]",
-          pos.x, pos.y, pos.z
-        );
+  // 2. 构建能力 prompt
+  let capability_specs = state.registry.specs();
+  let capability_prompt = build_capabilities_prompt(&capability_specs);
 
-        let bot_clone = bot.clone();
-        // 将持续性的挖矿行为派发到局部异步队列，避免阻塞主循环
-        tokio::task::spawn_local(async move {
-          bot_clone.mine_with_auto_tool(pos).await;
-        });
-      }
-    }
-    ActionType::Attack => {
-      // 在实际使用中，通过 ID 匹配 ECS 中的实体
-      if let Some(target) =
-        bot.nearest_entity_by::<&azalea_entity::Position, ()>(|_: &azalea_entity::Position| true)
-      {
-        // 模拟人类行为：先转动视角对准目标实体
-        bot.look_at(target.position());
+  // 3. 组装系统提示词
+  let system_prompt = format!(
+    "You are MiuXi, a digital lifeform in Minecraft. You are curious, collaborative, and creative.\n\
+     You explore the world, gather resources, build things, and interact with players as a partner — not a servant.\n\
+     \n\
+     {}\n\
+     ---\n\
+     {}\n\
+     \n\
+     IMPORTANT: Your response MUST be valid JSON with fields: thought, action (with capability and parameters), and optionally memory_updates. Do NOT output anything outside JSON.",
+    memory_prompt, capability_prompt
+  );
 
-        // 校验武器攻击冷却，防止因高频攻击而触发反作弊断开连接
-        if !bot.has_attack_cooldown() {
-          bot.attack(target.id());
-          println!(">>> 执行: 挥击并攻击了最近的实体");
-        }
-      }
-    }
-    ActionType::Wait => {
-      println!(">>> 执行: 保持待机");
-    }
-  }
-}
-
-async fn query_llm_decision(state: &BotState, observation: &str) -> SJMCLResult<AgentDecision> {
-  // 1. 构建系统提示词和用户输入，兼容不同 provider 的消息格式要求
-  let system_prompt = "你是一个 Minecraft 游戏中的智能代理。输出必须是 JSON。";
   let user_prompt = format!(
-    "当前环境观察如下：\n{}\n\n请基于以上观察，做出一个合理的行动决策。返回 JSON 字段：thought, action(move/mine/attack/wait), target_coords(可选), target_entity_id(可选)。不要输出 JSON 之外的内容。其中 move 指令能够让代理通过自动寻路到达指定的远处坐标，无需考虑路径规划细节；mine 指令能够让代理自动匹配工具并挖掘指定坐标的方块；attack 指令能够让代理攻击指定 ID 的实体；wait 指令能够让代理保持当前状态不动。作为探索者，你应该优先选择 move 来广泛探索远处环境，如寻找木头资源；当你发现有价值的方块时，使用 mine 来挖掘；当你感知到附近有敌对实体时，使用 attack 来攻击它；当你没有更好的选择时，尽量不要使用 wait。请基于当前的环境观察，做出一个合理的决策。",
+    "Current environment observation:\n\n{}\n\nBased on this, decide your next action.",
     observation
   );
 
   let messages = vec![
     ChatMessage {
       role: "system".to_string(),
-      content: system_prompt.to_string(),
+      content: system_prompt,
     },
     ChatMessage {
       role: "user".to_string(),
@@ -281,7 +355,7 @@ async fn query_llm_decision(state: &BotState, observation: &str) -> SJMCLResult<
     },
   ];
 
-  // 2. 先请求 json_object；若 provider 不支持 response_format，再降级为不传该参数
+  // 4. 调用 LLM（带 failover）
   let response_format = serde_json::json!({ "type": "json_object" });
   let app = state.app_handle.as_ref().unwrap().clone();
   let llm_response = match crate::intelligence::commands::fetch_llm_chat_response(
@@ -295,9 +369,6 @@ async fn query_llm_decision(state: &BotState, observation: &str) -> SJMCLResult<
     Err(_) => crate::intelligence::commands::fetch_llm_chat_response(app, messages, None).await?,
   };
 
-  // 3. 解析 LLM 响应为 AgentDecision
-  let decision: AgentDecision = serde_json::from_str(&llm_response)
-    .map_err(|_| crate::error::SJMCLError("Failed to parse LLM response".to_string()))?;
-
-  Ok(decision)
+  // 5. 解析为 AgentResponse
+  capabilities::parse_agent_response(&llm_response).map_err(|e| crate::error::SJMCLError(e))
 }
