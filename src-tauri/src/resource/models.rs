@@ -76,6 +76,14 @@ pub enum OtherResourceApiEndpoint {
 }
 
 // mod, save, resourcepack, datapack and shader
+#[derive(Debug, PartialEq, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McmodRankingItem {
+  pub id: String,
+  pub name: String,
+  pub website_url: String,
+}
+
 #[derive(Debug, PartialEq, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct OtherResourceInfo {

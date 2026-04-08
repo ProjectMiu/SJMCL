@@ -12,8 +12,14 @@ export interface GameClientResourceInfo {
   url: string;
 }
 
+export interface McmodRankingItem {
+  id: string;
+  name: string;
+  websiteUrl: string;
+}
+
 export interface OtherResourceInfo {
-  id?: string; // got from API
+  id: string; // got from API
   mcmodId?: number; //got from mod database in backend
   websiteUrl?: string;
   type: OtherResourceType;

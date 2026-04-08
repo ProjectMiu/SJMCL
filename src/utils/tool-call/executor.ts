@@ -1,9 +1,16 @@
 import { gameTypesToIcon } from "@/components/modals/create-instance-modal";
 import { ToolExecutionContextData } from "@/contexts/tool-call";
+import { InstanceSubdirType, ModLoaderType } from "@/enums/instance";
+import { OtherResourceSource } from "@/enums/resource";
 import { ToolCallStatus } from "@/enums/tool-call";
 import { GetStateFlag } from "@/hooks/get-state";
 import { NewsPostRequest } from "@/models/news-post";
-import { defaultModLoaderResourceInfo } from "@/models/resource";
+import {
+  OtherResourceFileInfo,
+  OtherResourceType,
+  OtherResourceVersionPack,
+  defaultModLoaderResourceInfo,
+} from "@/models/resource";
 import { TOOL_DEFINITIONS } from "@/prompts/tool";
 import { ConfigService } from "@/services/config";
 import { DiscoverService } from "@/services/discover";
@@ -11,6 +18,102 @@ import { InstanceService } from "@/services/instance";
 import { ResourceService } from "@/services/resource";
 import { UtilsService } from "@/services/utils";
 import { renderParamsSignature } from "@/utils/tool-call/definition-renderer";
+
+function resolvePreferredModLoader(
+  instance: any,
+  requestedModLoader?: string
+): ModLoaderType | "All" {
+  const allowed: Array<ModLoaderType | "All"> = [
+    "All",
+    ModLoaderType.Fabric,
+    ModLoaderType.Forge,
+    ModLoaderType.NeoForge,
+    ModLoaderType.Quilt,
+  ];
+  if (
+    requestedModLoader &&
+    allowed.includes(requestedModLoader as ModLoaderType | "All")
+  ) {
+    return requestedModLoader as ModLoaderType | "All";
+  }
+  const loaderType = instance?.modLoader?.loaderType;
+  if (loaderType && allowed.includes(loaderType)) {
+    return loaderType;
+  }
+  return "All";
+}
+
+function buildPreferredGameVersions(
+  instance: any,
+  requestedVersion?: string
+): string[] {
+  if (requestedVersion) {
+    return [requestedVersion];
+  }
+  if (instance?.version) {
+    return [instance.version];
+  }
+  if (instance?.majorVersion) {
+    return [instance.majorVersion];
+  }
+  return ["All"];
+}
+
+function findBestResourceFile(
+  versionPacks: OtherResourceVersionPack[],
+  instance: any,
+  requestedVersion?: string,
+  modLoaderType: string = "All"
+): OtherResourceFileInfo | null {
+  const prioritizePacks = (packs: OtherResourceVersionPack[]) => {
+    const items = packs.flatMap((pack) => pack.items);
+    const filtered = items.filter((item) => {
+      if (modLoaderType !== "All" && item.loader) {
+        return item.loader.toLowerCase() === modLoaderType.toLowerCase();
+      }
+      return true;
+    });
+    const releaseItems = filtered.filter((item) =>
+      ["release", "beta"].includes(item.releaseType)
+    );
+    const candidates = releaseItems.length > 0 ? releaseItems : filtered;
+    candidates.sort(
+      (a, b) => new Date(b.fileDate).getTime() - new Date(a.fileDate).getTime()
+    );
+    return candidates[0] ?? null;
+  };
+
+  if (requestedVersion) {
+    const exactPack = versionPacks.find(
+      (pack) => pack.name === requestedVersion
+    );
+    if (exactPack) {
+      const file = prioritizePacks([exactPack]);
+      if (file) return file;
+    }
+  }
+
+  const exactVersionPack = versionPacks.find(
+    (pack) => pack.name === instance?.version
+  );
+  if (exactVersionPack) {
+    const file = prioritizePacks([exactVersionPack]);
+    if (file) return file;
+  }
+
+  const majorVersion = instance?.majorVersion;
+  if (majorVersion) {
+    const matchingPack = versionPacks.find((pack) =>
+      pack.name.startsWith(majorVersion)
+    );
+    if (matchingPack) {
+      const file = prioritizePacks([matchingPack]);
+      if (file) return file;
+    }
+  }
+
+  return prioritizePacks(versionPacks);
+}
 
 export async function executeToolCall(
   name: string,
@@ -193,6 +296,110 @@ export async function executeToolCall(
         })
       );
       return await DiscoverService.fetchNewsPostSummaries(sources);
+
+    case "fetch_mcmod_rankings":
+      return await DiscoverService.fetchMcmodRankings(
+        params.category || "technology",
+        params.period || "day"
+      );
+
+    case "download_mod_to_instance": {
+      if (
+        !params.instanceId ||
+        !params.downloadSource ||
+        !params.resourceId ||
+        ![
+          OtherResourceSource.CurseForge,
+          OtherResourceSource.Modrinth,
+        ].includes(params.downloadSource)
+      ) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "Missing instanceId, downloadSource, or resourceId, or downloadSource is invalid",
+        };
+      }
+
+      const instanceListResp = await InstanceService.retrieveInstanceList();
+      if (instanceListResp.status !== ToolCallStatus.Success) {
+        return instanceListResp;
+      }
+      const instance = instanceListResp.data.find(
+        (inst: any) => inst.id === params.instanceId
+      );
+      if (!instance) {
+        return {
+          status: ToolCallStatus.Error,
+          message: `Instance not found: ${params.instanceId}`,
+        };
+      }
+
+      const resourceInfoResp = await ResourceService.fetchRemoteResourceById(
+        params.downloadSource,
+        params.resourceId
+      );
+      if (resourceInfoResp.status !== "success") {
+        return resourceInfoResp;
+      }
+      const resourceInfo = resourceInfoResp.data;
+      if (resourceInfo.type !== OtherResourceType.Mod) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "The selected resource is not a mod and cannot be installed to an instance mod folder.",
+        };
+      }
+
+      const preferredModLoader = resolvePreferredModLoader(
+        instance,
+        params.modLoaderType
+      );
+      const gameVersions = buildPreferredGameVersions(
+        instance,
+        params.gameVersion
+      );
+
+      const versionPacksResp = await ResourceService.fetchResourceVersionPacks(
+        params.resourceId,
+        preferredModLoader,
+        gameVersions,
+        params.downloadSource
+      );
+      if (versionPacksResp.status !== "success") {
+        return versionPacksResp;
+      }
+
+      const selectedFile = findBestResourceFile(
+        versionPacksResp.data,
+        instance,
+        params.version,
+        preferredModLoader
+      );
+      if (!selectedFile) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "Could not find a compatible resource file for the specified instance and source",
+        };
+      }
+
+      return {
+        status: ToolCallStatus.PendingConfirmation,
+        instruction:
+          "Show the user the current vs proposed values and ask them to reply '确认' or 'ok' in the chat to apply the change.",
+        action: "download_mod_to_instance",
+        instanceName: instance.name,
+        instanceId: params.instanceId,
+        resourceName: resourceInfo.name,
+        downloadSource: params.downloadSource,
+        resourceId: params.resourceId,
+        fileName: selectedFile.fileName,
+        fileDate: selectedFile.fileDate,
+        releaseType: selectedFile.releaseType,
+        modLoaderType: preferredModLoader,
+        gameVersions,
+      };
+    }
 
     // ── Meta tool: deferred tool search ────────────────────────────────
 
@@ -616,6 +823,115 @@ export async function commitToolCall(
         status: ToolCallStatus.Success,
         message: `Java ${params.version} download started`,
       };
+
+    case "download_mod_to_instance": {
+      if (
+        !params.instanceId ||
+        !params.downloadSource ||
+        !params.resourceId ||
+        ![
+          OtherResourceSource.CurseForge,
+          OtherResourceSource.Modrinth,
+        ].includes(params.downloadSource)
+      ) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "Missing instanceId, downloadSource, or resourceId, or downloadSource is invalid",
+        };
+      }
+
+      const instanceListResp = await InstanceService.retrieveInstanceList();
+      if (instanceListResp.status !== ToolCallStatus.Success) {
+        return instanceListResp;
+      }
+      const instance = instanceListResp.data.find(
+        (inst: any) => inst.id === params.instanceId
+      );
+      if (!instance) {
+        return {
+          status: ToolCallStatus.Error,
+          message: `Instance not found: ${params.instanceId}`,
+        };
+      }
+
+      const resourceInfoResp = await ResourceService.fetchRemoteResourceById(
+        params.downloadSource,
+        params.resourceId
+      );
+      if (resourceInfoResp.status !== "success") {
+        return resourceInfoResp;
+      }
+      const resourceInfo = resourceInfoResp.data;
+      if (resourceInfo.type !== OtherResourceType.Mod) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "The selected resource is not a mod and cannot be installed to an instance mod folder.",
+        };
+      }
+
+      const preferredModLoader = resolvePreferredModLoader(
+        instance,
+        params.modLoaderType
+      );
+      const gameVersions = buildPreferredGameVersions(
+        instance,
+        params.gameVersion
+      );
+
+      const versionPacksResp = await ResourceService.fetchResourceVersionPacks(
+        params.resourceId,
+        preferredModLoader,
+        gameVersions,
+        params.downloadSource
+      );
+      if (versionPacksResp.status !== "success") {
+        return versionPacksResp;
+      }
+
+      const selectedFile = findBestResourceFile(
+        versionPacksResp.data,
+        instance,
+        params.version,
+        preferredModLoader
+      );
+      if (!selectedFile) {
+        return {
+          status: ToolCallStatus.Error,
+          message:
+            "Could not find a compatible resource file for the specified instance and source",
+        };
+      }
+
+      const subdirResp = await InstanceService.retrieveInstanceSubdirPath(
+        params.instanceId,
+        InstanceSubdirType.Mods
+      );
+      if (subdirResp.status !== "success") {
+        return subdirResp;
+      }
+      const modsPath = subdirResp.data;
+      const oldFilePath = `${modsPath}/${selectedFile.fileName}`;
+
+      const updateResp = await ResourceService.updateMods(params.instanceId, [
+        {
+          url: selectedFile.downloadUrl,
+          sha1: selectedFile.sha1,
+          fileName: selectedFile.fileName,
+          oldFilePath,
+        },
+      ]);
+
+      if (updateResp.status !== "success") {
+        return updateResp;
+      }
+
+      return {
+        status: ToolCallStatus.Success,
+        message: `Started downloading ${selectedFile.fileName} to instance ${instance.name}`,
+      };
+    }
 
     case "toggle_mod":
       await InstanceService.toggleModByExtension(

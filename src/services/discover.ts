@@ -4,6 +4,7 @@ import {
   NewsPostSummary,
   NewsSourceInfo,
 } from "@/models/news-post";
+import { McmodRankingItem } from "@/models/resource";
 import { InvokeResponse } from "@/models/response";
 import { responseHandler } from "@/utils/response";
 
@@ -35,5 +36,19 @@ export class DiscoverService {
     }>
   > {
     return await invoke("fetch_news_post_summaries", { requests: sources });
+  }
+
+  /**
+   * FETCH mcmod.cn daily mod rankings.
+   * @param category The mod category
+   * @param period The time period (day/week/month)
+   * @returns {Promise<InvokeResponse<McmodRankingItem[]>>}
+   */
+  @responseHandler("resource")
+  static async fetchMcmodRankings(
+    category: string,
+    period: string
+  ): Promise<InvokeResponse<McmodRankingItem[]>> {
+    return await invoke("fetch_mcmod_rankings", { category, period });
   }
 }

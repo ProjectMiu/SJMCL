@@ -175,6 +175,7 @@ pub async fn run() {
         resource::commands::fetch_remote_resource_by_id,
         discover::commands::fetch_news_sources_info,
         discover::commands::fetch_news_post_summaries,
+        discover::commands::fetch_mcmod_rankings,
         tasks::commands::schedule_progressive_task_group,
         tasks::commands::cancel_progressive_task,
         tasks::commands::resume_progressive_task,

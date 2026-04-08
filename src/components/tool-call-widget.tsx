@@ -7,6 +7,7 @@ import {
   Icon,
   Spinner,
   Text,
+  VStack,
   useColorModeValue,
 } from "@chakra-ui/react";
 import React, { useState } from "react";
@@ -18,6 +19,7 @@ import {
   LuX,
   LuZap,
 } from "react-icons/lu";
+import { useSharedModals } from "@/contexts/shared-modal";
 import { useToolCall } from "@/contexts/tool-call";
 import { ToolCallStatus } from "@/enums/tool-call";
 import { parseToolCallStatus } from "@/utils/tool-call/parser";
@@ -39,6 +41,7 @@ export const ToolCallWidget: React.FC<{
   const textColor = useColorModeValue("purple.800", "purple.100");
   const codeBgColor = useColorModeValue("whiteAlpha.500", "blackAlpha.400");
   const { getToolCallState } = useToolCall();
+  const { openSharedModal } = useSharedModals();
 
   const [isOpen, setIsOpen] = useState(false);
 
@@ -135,18 +138,68 @@ export const ToolCallWidget: React.FC<{
               : t("AgentChatPage.toolCall.result")}
           </Button>
           <Collapse in={isOpen} animateOpacity>
-            <Code
-              mt={1}
-              display="block"
-              whiteSpace="pre-wrap"
-              fontSize="2xs"
-              p={2}
-              borderRadius="md"
-              bg={codeBgColor}
-              colorScheme={error ? "red" : "green"}
-            >
-              {error || result}
-            </Code>
+            {data.name === "fetch_mcmod_rankings" && result && !error ? (
+              <VStack mt={1} spacing={1} align="start">
+                {(() => {
+                  try {
+                    const rankings = JSON.parse(result);
+                    return rankings.map((item: any, index: number) => (
+                      <Text
+                        key={index}
+                        fontSize="xs"
+                        color={textColor}
+                        cursor="pointer"
+                        _hover={{ textDecoration: "underline" }}
+                        onClick={() => {
+                          openSharedModal("download-specific-resource", {
+                            resource: {
+                              id: item.id,
+                              websiteUrl: item.websiteUrl,
+                              type: "mod",
+                              name: item.name,
+                              description: `Rank #${index + 1} mod`,
+                              iconSrc: "",
+                              tags: [],
+                              lastUpdated: "",
+                              downloads: 0,
+                            },
+                          });
+                        }}
+                      >
+                        #{index + 1} {item.name}
+                      </Text>
+                    ));
+                  } catch {
+                    return (
+                      <Code
+                        display="block"
+                        whiteSpace="pre-wrap"
+                        fontSize="2xs"
+                        p={2}
+                        borderRadius="md"
+                        bg={codeBgColor}
+                        colorScheme="green"
+                      >
+                        {result}
+                      </Code>
+                    );
+                  }
+                })()}
+              </VStack>
+            ) : (
+              <Code
+                mt={1}
+                display="block"
+                whiteSpace="pre-wrap"
+                fontSize="2xs"
+                p={2}
+                borderRadius="md"
+                bg={codeBgColor}
+                colorScheme={error ? "red" : "green"}
+              >
+                {error || result}
+              </Code>
+            )}
           </Collapse>
         </Box>
       )}

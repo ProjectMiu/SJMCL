@@ -381,6 +381,94 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     },
   },
   {
+    name: "fetch_mcmod_rankings",
+    category: "query",
+    isReadOnly: true,
+    description: {
+      "zh-Hans": "获取 mcmod.cn 的每日 mod 排行榜",
+      en: "Fetch daily mod rankings from mcmod.cn",
+    },
+    parameters: {
+      type: "object",
+      properties: {
+        category: {
+          type: "string",
+          enum: [
+            "technology",
+            "magic",
+            "adventure",
+            "farming",
+            "decoration",
+            "utility",
+            "auxiliary",
+            "lib",
+          ],
+        },
+        period: {
+          type: "string",
+          enum: ["day", "week", "month"],
+        },
+      },
+      required: [],
+    },
+    usageNotes: {
+      "zh-Hans": [
+        "category 参数指定分类：technology（科技）、magic（魔法）、adventure（冒险）、farming（农业）、decoration（装饰）、utility（实用）、auxiliary（辅助）、lib（库）",
+        "period 参数指定时间段：day（今日）、week（本周）、month（本月）",
+        "返回包含 mod 名称、mcmodId、排名等信息的列表",
+      ],
+      en: [
+        "category specifies the mod category: technology, magic, adventure, farming, decoration, utility, auxiliary, lib",
+        "period specifies the time period: day, week, month",
+        "returns a list with mod names, mcmodId, rankings, etc.",
+      ],
+    },
+  },
+  {
+    name: "download_mod_to_instance",
+    category: "write",
+    isReadOnly: false,
+    shouldDefer: true,
+    maxResultSizeChars: 2000,
+    requiresConfirmation: true,
+    description: {
+      "zh-Hans": "从 CurseForge 或 Modrinth 下载指定模组并安装到指定实例",
+      en: "Download a specified mod from CurseForge or Modrinth into a specific instance",
+    },
+    parameters: {
+      type: "object",
+      properties: {
+        instanceId: { type: "string" },
+        downloadSource: {
+          type: "string",
+          enum: ["CurseForge", "Modrinth"],
+        },
+        resourceId: { type: "string" },
+        gameVersion: { type: "string" },
+        modLoaderType: {
+          type: "string",
+          enum: ["All", "Fabric", "Forge", "NeoForge", "Quilt"],
+        },
+        version: { type: "string" },
+      },
+      required: ["instanceId", "downloadSource", "resourceId"],
+    },
+    usageNotes: {
+      "zh-Hans": [
+        "instanceId 必须从 retrieve_instance_list 获取",
+        "downloadSource 必须是 CurseForge 或 Modrinth",
+        "resourceId 可以从搜索结果或资源详情中获得",
+        "如果未指定 gameVersion，将使用实例当前版本；如果未指定 modLoaderType，将使用实例当前模组加载器或 All",
+      ],
+      en: [
+        "instanceId must be retrieved from retrieve_instance_list",
+        "downloadSource must be CurseForge or Modrinth",
+        "resourceId can be obtained from search results or resource details",
+        "when gameVersion is not provided, the instance version will be used; when modLoaderType is not provided, the instance mod loader or All will be used",
+      ],
+    },
+  },
+  {
     name: "retrieve_launcher_config",
     category: "query",
     isReadOnly: true,

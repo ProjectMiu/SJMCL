@@ -221,7 +221,7 @@ const AgentChat: React.FC<AgentChatProps> = ({ onAgentChatPanelClose }) => {
   };
 
   useEffect(() => {
-    console.log(messages);
+    // Messages updated
   }, [messages]);
 
   const handleShowHistory = async () => {
